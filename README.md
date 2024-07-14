@@ -22,7 +22,7 @@ WebSysMon is a tool for real-time monitoring of system status through a web inte
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/yourusername/WebSysMon.git
+    git clone https://github.com/guiyuanyuanbao/WebSysMon.git
     cd WebSysMon
     ```
 
