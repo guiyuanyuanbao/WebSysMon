@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>System Monitor</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <!-- 引入ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@latest"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+
+        #metrics {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .section {
+            width: 100%;
+            max-width: 800px;
+            margin: 20px 0;
+            background: #fff;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+        }
+
+        .section h2 {
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            color: #444;
+            text-align: center;
+        }
+
+        .chart-container {
+            width: 100%;
+            height: 300px;
+        }
+
+        .disk-chart-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+
+        .disk-chart {
+            width: 45%;
+            height: 200px;
+            margin-bottom: 20px;
+        }
+
+        .network-chart-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .network-chart {
+            width: 100%;
+            height: 300px;
+            margin-bottom: 20px;
+        }
+
+        .gpu-chart-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .gpu-chart-section {
+            width: 100%;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .gpu-load {
+            width: 66%;
+            height: 300px;
+        }
+
+        .gpu-temperature {
+            width: 33%;
+            height: 300px;
+        }
+
+        .gpu-charts-row {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        @media (max-width: 600px) {
+            .chart-container, .network-chart, .disk-chart, .gpu-load, .gpu-temperature {
+                width: 100%;
+            }
+
+            .gpu-charts-row {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+
+        #time {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-top: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+<h1 style="text-align: center;">Real-time System Monitoring</h1>
+<div id="metrics">
+    <div class="section">
+        <h2>General Metrics</h2>
+        <p id="time">N/A</p>
+        <div class="chart-container" id="cpu-chart"></div>
+        <div class="chart-container" id="memory-chart"></div>
+    </div>
+    <div class="section">
+        <h2>Disk Usage</h2>
+        <div class="disk-chart-container" id="disk-charts"></div>
+    </div>
+    <div class="section">
+        <h2>Network</h2>
+        <div class="network-chart-container">
+            <div class="network-chart" id="network-speed-sent-chart"></div>
+            <div class="network-chart" id="network-speed-recv-chart"></div>
+            <div class="network-chart" id="network-sent-chart"></div>
+            <div class="network-chart" id="network-recv-chart"></div>
+        </div>
+    </div>
+    <div class="section">
+        <h2>GPU Usage</h2>
+        <div class="gpu-chart-container" id="gpu-charts"></div>
+    </div>
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const eventSource = new EventSource('/stream');
+        const timeElem = document.getElementById('time');
+        const cpuChart = echarts.init(document.getElementById('cpu-chart'));
+        const memoryChart = echarts.init(document.getElementById('memory-chart'));
+        const diskChartsContainer = document.getElementById('disk-charts');
+        let diskCharts = {}; // 存储已经创建的磁盘图表
+        const networkSentChart = echarts.init(document.getElementById('network-sent-chart'));
+        const networkRecvChart = echarts.init(document.getElementById('network-recv-chart'));
+        const networkSpeedSentChart = echarts.init(document.getElementById('network-speed-sent-chart'));
+        const networkSpeedRecvChart = echarts.init(document.getElementById('network-speed-recv-chart'));
+        const gpuChartsContainer = document.getElementById('gpu-charts');
+        let gpuCharts = {}; // 存储已经创建的GPU图表
+
+        const initLineChart = (chart, title, yAxisName) => {
+            const option = {
+                title: {text: title, left: 'center'},
+                tooltip: {trigger: 'axis'},
+                xAxis: {
+                    type: 'time',
+                    boundaryGap: false,
+                    axisLabel: {
+                        formatter: function (value) {
+                            const date = new Date(value);
+                            return `${date.getHours()}:${date.getMinutes()}`;
+                        },
+                        interval: 'auto',
+                        rotate: 0
+                    }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: yAxisName
+                },
+                series: [{
+                    name: title,
+                    type: 'line',
+                    smooth: true,
+                    data: []
+                }]
+            };
+            chart.setOption(option);
+        };
+
+        const initPieChart = (chart, title, data) => {
+            const option = {
+                title: {text: title, left: 'center'},
+                tooltip: {
+                    trigger: 'item',
+                    formatter: '{a} <br/>{b} : {c}GB ({d}%)'
+                },
+                series: [{
+                    name: title,
+                    type: 'pie',
+                    radius: '50%',
+                    data: data,
+                    label: {
+                        formatter: '{b}: {d}%\n({c}GB)'
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            shadowBlur: 10,
+                            shadowOffsetX: 0,
+                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                        }
+                    }
+                }]
+            };
+            chart.setOption(option);
+        };
+
+        const initGPUChart = (chart, gpuName) => {
+            const option = {
+                tooltip: {trigger: 'axis'},
+                xAxis: {
+                    type: 'time',
+                    boundaryGap: false,
+                    axisLabel: {
+                        formatter: function (value) {
+                            const date = new Date(value);
+                            return `${date.getHours()}:${date.getMinutes()}`;
+                        },
+                        interval: 'auto',
+                        rotate: 0
+                    }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: 'Load (%)'
+                },
+                series: [{
+                    name: 'Load',
+                    type: 'line',
+                    smooth: true,
+                    data: []
+                }]
+            };
+            chart.setOption(option);
+        };
+
+        const initTemperatureGauge = (chart) => {
+            const option = {
+                tooltip: {formatter: '{a} <br/>{b} : {c}°C'},
+                series: [{
+                    name: 'Temperature',
+                    type: 'gauge',
+                    min: 0,
+                    max: 100,
+                    splitNumber: 10,
+                    radius: '80%',
+                    axisLine: {
+                        lineStyle: {
+                            color: [[0.3, '#67e0e3'], [0.7, '#37a2da'], [1, '#fd666d']],
+                            width: 15
+                        }
+                    },
+                    axisTick: {
+                        length: 15,
+                        lineStyle: {color: 'auto'}
+                    },
+                    splitLine: {
+                        length: 20,
+                        lineStyle: {color: 'auto'}
+                    },
+                    pointer: {width: 5},
+                    title: {offsetCenter: [0, '70%']},
+                    detail: {fontSize: 20, formatter: '{value}°C'},
+                    data: [{value: 0, name: 'Temp'}]
+                }]
+            };
+            chart.setOption(option);
+        };
+
+        const MAX_DATA_POINTS = 20;
+        const updateChartData = (chart, seriesIndex, value) => {
+            const option = chart.getOption();
+            option.series[seriesIndex].data.push({value: [new Date(), value]});
+            // 如果数据点数量超过最大值，移除最早的数据点
+            if (option.series[seriesIndex].data.length > MAX_DATA_POINTS) {
+                option.series[seriesIndex].data.shift();
+            }
+            chart.setOption(option);
+        };
+
+        // 初始化CPU和内存折线图
+        initLineChart(cpuChart, 'CPU Usage', '%');
+        initLineChart(memoryChart, 'Memory Usage', '%');
+
+        // 初始化网络图表
+        initLineChart(networkSentChart, 'Network Sent', 'MB');
+        initLineChart(networkRecvChart, 'Network Received', 'MB');
+        initLineChart(networkSpeedSentChart, 'Network Speed Sent', 'KB/s');
+        initLineChart(networkSpeedRecvChart, 'Network Speed Received', 'KB/s');
+
+        eventSource.onmessage = function (event) {
+            try {
+                const data = JSON.parse(event.data);
+                const now = new Date();
+                const formattedTime = now.toLocaleTimeString();
+                timeElem.textContent = `Current Time: ${formattedTime}`;
+
+                // 更新网络数据
+                const networkSentMB = (parseFloat(data.network_io.sent) / 1024 / 1024).toFixed(2);
+                const networkRecvMB = (parseFloat(data.network_io.recv) / 1024 / 1024).toFixed(2);
+                const networkSpeedSentKB = (parseFloat(data.network_speed.sent) / 1024).toFixed(2);
+                const networkSpeedRecvKB = (parseFloat(data.network_speed.recv) / 1024).toFixed(2);
+
+                updateChartData(cpuChart, 0, parseFloat(data.cpu_usage));
+                updateChartData(memoryChart, 0, parseFloat(data.memory_usage));
+                updateChartData(networkSentChart, 0, networkSentMB);
+                updateChartData(networkRecvChart, 0, networkRecvMB);
+                updateChartData(networkSpeedSentChart, 0, networkSpeedSentKB);
+                updateChartData(networkSpeedRecvChart, 0, networkSpeedRecvKB);
+
+                // 更新或创建磁盘使用情况饼图
+                Object.entries(data.disk_usage_all).forEach(([drive, usage]) => {
+                    if (!diskCharts[drive]) {
+                        const diskChartDiv = document.createElement('div');
+                        diskChartDiv.className = 'disk-chart';
+                        diskChartsContainer.appendChild(diskChartDiv);
+                        diskCharts[drive] = echarts.init(diskChartDiv);
+                    }
+                    const totalGB = (parseFloat(usage.total)).toFixed(2);
+                    const diskData = [
+                        {value: parseFloat(usage.used).toFixed(2), name: 'Used'},
+                        {value: parseFloat(usage.free).toFixed(2), name: 'Free'}
+                    ];
+                    initPieChart(diskCharts[drive], `Disk Usage (${drive} - Total: ${totalGB}GB)`, diskData);
+                });
+
+                // 更新或创建GPU使用情况折线图
+                data.gpu_usage.forEach((gpu) => {
+                    let gpuChart = gpuCharts[gpu.id];
+                    if (!gpuChart) {
+                        const gpuChartSection = document.createElement('div');
+                        gpuChartSection.className = 'gpu-chart-section';
+                        gpuChartsContainer.appendChild(gpuChartSection);
+
+                        const titleDiv = document.createElement('h3');
+                        titleDiv.innerText = `GPU ${gpu.name} Usage and Temperature`;
+                        gpuChartSection.prepend(titleDiv);
+
+                        const gpuChartsRow = document.createElement('div');
+                        gpuChartsRow.className = 'gpu-charts-row';
+                        gpuChartSection.appendChild(gpuChartsRow);
+
+                        const gpuLoadDiv = document.createElement('div');
+                        gpuLoadDiv.className = 'gpu-load';
+                        gpuLoadDiv.id = `gpu-load-${gpu.id}`;
+                        gpuChartsRow.appendChild(gpuLoadDiv);
+
+                        const gpuTempDiv = document.createElement('div');
+                        gpuTempDiv.className = 'gpu-temperature';
+                        gpuTempDiv.id = `gpu-temp-${gpu.id}`;
+                        gpuChartsRow.appendChild(gpuTempDiv);
+
+                        gpuChart = echarts.init(gpuLoadDiv);
+                        initGPUChart(gpuChart, `GPU ${gpu.name}`);
+                        gpuCharts[gpu.id] = gpuChart;
+
+                        const gpuTempChart = echarts.init(gpuTempDiv);
+                        initTemperatureGauge(gpuTempChart);
+                        gpuCharts[gpu.id + '-temp'] = gpuTempChart;
+                    }
+                    updateChartData(gpuCharts[gpu.id], 0, parseFloat(gpu.load));
+
+                    const tempOption = gpuCharts[gpu.id + '-temp'].getOption();
+                    tempOption.series[0].data[0].value = parseFloat(gpu.temperature);
+                    gpuCharts[gpu.id + '-temp'].setOption(tempOption);
+                });
+
+            } catch (error) {
+                console.error('Error processing SSE event:', error);
+            }
+        };
+
+        eventSource.onerror = function (event) {
+            console.error('EventSource failed:', event);
+            // 尝试重新连接
+            eventSource.close();
+            setTimeout(() => {
+                document.location.reload(true);
+            }, 5000);
+        };
+    });
+</script>
+</body>
+</html>
