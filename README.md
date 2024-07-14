@@ -12,6 +12,12 @@ WebSysMon is a tool for real-time monitoring of system status through a web inte
 - Real-time network traffic and speed monitoring
 - Real-time GPU usage and temperature monitoring
 
+### Supported Operating Systems
+WebSysMon is compatible with a variety of operating systems, including but not limited to:
+- Linux
+- Windows
+- macOS
+
 ### Installation and Usage
 
 #### Prerequisites
