@@ -22,7 +22,7 @@ WebSysMon 是一个通过网页界面实时监控系统状态的工具。它使�
 
 1. 克隆仓库:
     ```sh
-    git clone https://github.com/yourusername/WebSysMon.git
+    git clone https://github.com/guiyuanyuanbao/WebSysMon.git
     cd WebSysMon
     ```
 
